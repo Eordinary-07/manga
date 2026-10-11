@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#12141c">
+<title>Offline Manga Reader</title>
+<style>
+:root{
+  --sumi:#12141c; --ink:#1b1f2c; --ink2:#262b3b; --line:#343a52;
+  --washi:#ece8df; --mute:#9ba1b6; --gold:#d9a441; --gold-ink:#241a05; --red:#e5796d;
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Noto Serif",Georgia,serif;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --top:env(safe-area-inset-top,0px); --bot:env(safe-area-inset-bottom,0px);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;min-height:100%;background:var(--sumi);color:var(--washi);font:16px/1.45 var(--sans)}
+button,input{font:inherit;color:inherit}
+.hidden{display:none!important}
+
+/* buttons */
+.btn{border:1px solid var(--line);background:var(--ink);border-radius:999px;padding:.6rem 1.1rem;cursor:pointer}
+.btn.primary{background:var(--gold);color:var(--gold-ink);border-color:var(--gold);font-weight:600}
+.btn.danger{color:var(--red)}
+.btn:disabled{opacity:.5}
+.icon{background:none;border:0;padding:.55rem .7rem;border-radius:8px;cursor:pointer}
+button:focus-visible,input:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+
+/* library */
+.top{position:sticky;top:0;z-index:5;background:var(--sumi);padding:calc(var(--top) + 18px) 18px 14px}
+.top::before{content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(circle at 2px 2px,rgba(236,232,223,.17) 1.2px,transparent 1.7px) 0 0/9px 9px;
+  -webkit-mask-image:linear-gradient(to bottom,#000,transparent);mask-image:linear-gradient(to bottom,#000,transparent)}
+.top>*{position:relative}
+h1{font-family:var(--serif);font-weight:600;font-size:1.9rem;letter-spacing:-.01em;margin:0}
+.toprow{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}
+.toprow .icon{color:var(--mute);font-size:.88rem}
+#search{width:100%;background:var(--ink);border:1px solid var(--line);border-radius:10px;padding:.6rem .8rem}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:18px 14px;padding:10px 18px calc(96px + var(--bot))}
+.card{background:none;border:0;padding:0;text-align:left;cursor:pointer;display:block;width:100%}
+.cover{display:block;width:100%;aspect-ratio:2/3;object-fit:cover;border-radius:3px;background:var(--ink2)}
+.card .t{margin-top:8px;font-family:var(--serif);font-size:.95rem;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.card .s{color:var(--mute);font-size:.8rem;margin-top:4px}
+.bar-p{height:3px;background:var(--ink2);margin-top:7px;border-radius:2px;overflow:hidden}
+.bar-p i{display:block;height:100%;background:var(--gold)}
+.fab{position:fixed;right:18px;bottom:calc(18px + var(--bot));z-index:10;box-shadow:0 6px 18px rgba(0,0,0,.45)}
+.empty{margin:28px 18px;padding:34px 22px;text-align:center;border:1px dashed var(--line);border-radius:6px;
+  background:radial-gradient(circle at 2px 2px,rgba(236,232,223,.09) 1.2px,transparent 1.7px) 0 0/9px 9px}
+.empty .big{font-family:var(--serif);font-size:1.4rem;margin:0 0 8px}
+.empty p{margin:0 0 18px;color:var(--mute)}
+
+/* series */
+.bar{display:flex;align-items:center;padding:calc(var(--top) + 8px) 10px 4px}
+.hero{display:flex;gap:16px;padding:8px 18px 20px}
+.hero img{flex:none;width:104px;aspect-ratio:2/3;object-fit:cover;border-radius:3px;background:var(--ink2)}
+.hero h2{font-family:var(--serif);font-size:1.45rem;line-height:1.2;margin:0 0 6px}
+.hero p{margin:0 0 14px;color:var(--mute)}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+.chlist{list-style:none;margin:0;padding:0}
+.ch{display:flex;align-items:center;border-top:1px solid var(--line)}
+.ch .main{flex:1;min-width:0;text-align:left;background:none;border:0;padding:14px 18px;cursor:pointer}
+.ch .name{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ch .stt{display:block;color:var(--mute);font-size:.82rem}
+.ch.read .name{color:var(--mute)}
+.ch .tog{background:none;border:0;color:var(--mute);padding:14px 18px;cursor:pointer;font-size:.85rem}
+.foot{padding:22px 18px calc(28px + var(--bot));border-top:1px solid var(--line)}
+
+/* reader */
+#reader{position:fixed;inset:0;z-index:20;background:#000;color:var(--washi);user-select:none;-webkit-user-select:none}
+#stage{position:absolute;inset:0;overflow:auto;-webkit-overflow-scrolling:touch}
+#stage img{-webkit-touch-callout:none;user-select:none}
+#stage.paged{display:flex;align-items:center;justify-content:center;touch-action:pan-y pinch-zoom}
+#stage.paged.fit-screen{overflow:hidden}
+#stage.paged.fit-screen img{max-width:100%;max-height:100%;object-fit:contain}
+#stage.paged.fit-width{display:block}
+#stage.paged.fit-width img{display:block;width:100%;height:auto}
+#stage.scroll .sp{min-height:70vh}
+#stage.scroll .sp.loaded{min-height:0}
+#stage.scroll img{display:block;width:100%;max-width:900px;height:auto;margin:0 auto}
+.endcap{padding:56px 24px calc(64px + var(--bot));text-align:center;color:var(--mute)}
+.endcap p{margin:0 0 16px}
+.rbar{position:absolute;left:0;right:0;display:flex;align-items:center;gap:8px;padding:8px 10px;background:rgba(18,20,28,.95);transition:transform .18s ease}
+.rbar.top2{top:0;padding-top:calc(var(--top) + 8px);transform:translateY(-100%)}
+.rbar.bot{bottom:0;padding-bottom:calc(var(--bot) + 8px);transform:translateY(100%)}
+#reader.ui .rbar{transform:none}
+.rbar button{background:none;border:0;padding:.55rem .6rem;border-radius:8px;cursor:pointer;white-space:nowrap}
+.rtitle{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--serif)}
+#rSlider{flex:1;min-width:0;accent-color:var(--gold)}
+#rCount{min-width:4.2em;text-align:center;font-variant-numeric:tabular-nums;color:var(--mute);font-size:.9rem}
+
+/* sheets */
+.scrim{position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;justify-content:center}
+.sheet{width:100%;max-width:560px;max-height:92vh;overflow:auto;background:var(--ink);border-top:1px solid var(--line);border-radius:18px 18px 0 0;padding:20px 18px calc(20px + var(--bot))}
+.sheet h3{font-family:var(--serif);font-size:1.3rem;margin:0 0 4px}
+.sheet .hint{color:var(--mute);margin:0 0 14px;font-size:.92rem}
+.field{display:block;margin-bottom:12px}
+.field span,.lbl{display:block;font-size:.85rem;color:var(--mute);margin-bottom:5px}
+.field input{width:100%;background:var(--sumi);border:1px solid var(--line);border-radius:10px;padding:.65rem .8rem}
+.stack{display:grid;gap:10px;margin-top:6px}
+#status{min-height:1.4em;margin-top:12px;color:var(--gold);font-size:.9rem;overflow-wrap:anywhere}
+.seg{display:flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;margin-bottom:16px}
+.seg button{flex:1;background:none;border:0;padding:.55rem .3rem;cursor:pointer;font-size:.88rem}
+.seg button.on{background:var(--gold);color:var(--gold-ink);font-weight:600}
+.toast{position:fixed;left:50%;bottom:calc(84px + var(--bot));transform:translateX(-50%);z-index:60;max-width:90%;text-align:center;
+  background:var(--ink2);border:1px solid var(--line);border-radius:999px;padding:.6rem 1rem}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<main id="library">
+  <header class="top">
+    <div class="toprow"><h1>My manga</h1><button class="icon" data-action="import">More ways to add</button></div>
+    <input id="search" type="search" placeholder="Search your shelf" aria-label="Search your shelf">
+  </header>
+  <div id="grid" class="grid"></div>
+  <div id="empty" class="empty hidden">
+    <p class="big">Your shelf is empty</p>
+    <p>Tap Open zip, then pick the zip files of images you downloaded. Each zip becomes one manga. Everything is stored inside the app and works with no internet.</p>
+    <div class="row" style="justify-content:center">
+      <button class="btn primary" id="btnOpenZip">Open zip</button>
+      <button class="btn" data-action="import">More ways to add</button>
+    </div>
+  </div>
+  <button id="fab" class="btn primary fab">Open zip</button>
+</main>
+
+<main id="series" class="hidden">
+  <div class="bar"><button class="icon" id="serBack" aria-label="Back to library">‹ Library</button></div>
+  <div class="hero">
+    <img id="serCover" alt="">
+    <div>
+      <h2 id="serTitle"></h2>
+      <p id="serMeta"></p>
+      <div class="row">
+        <button class="btn primary" id="serContinue">Start reading</button>
+        <button class="btn" id="serSort">Newest first</button>
+      </div>
+    </div>
+  </div>
+  <ul id="chList" class="chlist"></ul>
+  <div class="foot row">
+    <button class="btn" id="serAdd">Add chapters</button>
+    <button class="btn danger" id="serDel">Remove from app</button>
+  </div>
+</main>
+
+<div id="reader" class="hidden">
+  <div id="stage"></div>
+  <div class="rbar top2">
+    <button id="rBack" aria-label="Close reader">‹ Back</button>
+    <div class="rtitle" id="rTitle"></div>
+    <button id="rOpt">Options</button>
+  </div>
+  <div class="rbar bot">
+    <button id="rPrev" aria-label="Previous chapter">‹ Prev</button>
+    <input type="range" id="rSlider" min="1" max="1" value="1" aria-label="Page">
+    <span id="rCount">1 / 1</span>
+    <button id="rNext" aria-label="Next chapter">Next ›</button>
+  </div>
+</div>
+
+<div id="importSheet" class="scrim hidden">
+  <div class="sheet" role="dialog" aria-labelledby="imH">
+    <h3 id="imH">Add manga</h3>
+    <p class="hint" id="imHint">Zip files: with no title, each zip becomes its own manga named after the file. Type a title to put all the zips you pick into one manga as separate chapters. Folders work too if your phone allows picking them.</p>
+    <label class="field"><span>Manga title (optional for zips, needed for loose images)</span><input id="imTitle" placeholder="e.g. Vagabond" autocomplete="off"></label>
+    <label class="field"><span>Chapter name (only for loose images)</span><input id="imChap" placeholder="Chapter 1" autocomplete="off"></label>
+    <div class="stack">
+      <button class="btn primary" id="btnFolder">Choose a folder</button>
+      <button class="btn" id="btnZip">Choose .cbz or .zip chapters</button>
+      <button class="btn" id="btnImg">Choose images for one chapter</button>
+      <button class="btn" id="imClose">Close</button>
+    </div>
+    <div id="status" role="status"></div>
+  </div>
+</div>
+
+<div id="rSheet" class="scrim hidden">
+  <div class="sheet" role="dialog" aria-label="Reading options">
+    <h3>Reading options</h3>
+    <div class="lbl">Reading mode</div>
+    <div class="seg" data-key="mode">
+      <button data-v="rtl">Right to left</button><button data-v="ltr">Left to right</button><button data-v="scroll">Vertical</button>
+    </div>
+    <div class="lbl">Page size (page modes)</div>
+    <div class="seg" data-key="fit">
+      <button data-v="screen">Fit screen</button><button data-v="width">Fit width</button>
+    </div>
+    <button class="btn primary" id="rDone" style="width:100%">Done</button>
+  </div>
+</div>
+
+<div id="confirm" class="scrim hidden" style="z-index:50">
+  <div class="sheet" role="alertdialog" aria-labelledby="cfMsg">
+    <p id="cfMsg" style="margin:0 0 16px"></p>
+    <div class="row"><button class="btn danger" id="cfOk">Remove</button><button class="btn" id="cfNo">Cancel</button></div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden" role="status"></div>
+
+<input type="file" id="inFolder" class="hidden" webkitdirectory multiple>
+<input type="file" id="inZip" class="hidden" multiple accept=".cbz,.zip,application/zip,application/x-zip-compressed,application/octet-stream,application/x-cbz,application/vnd.comicbook+zip">
+<input type="file" id="inImg" class="hidden" multiple accept="image/*">
+
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+const nat = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
+const stripExt = n => n.replace(/\.[^.]+$/, '');
+const pref = {
+  get(k, d) { try { const v = localStorage.getItem('mr_' + k); return v === null ? d : v; } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem('mr_' + k, v); } catch (e) {} }
+};
+const push = s => { try { history.pushState(s, ''); } catch (e) {} };
+
+let toastT;
+function toast(msg) {
+  const t = $('#toast'); t.textContent = msg; t.classList.remove('hidden');
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.add('hidden'), 2800);
+}
+
+// ZIP-START
+const IMG_RE = /\.(jpe?g|png|webp|gif|avif|bmp)$/i;
+const ZIP_RE = /\.(cbz|zip)$/i;
+const MIME = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif', avif: 'image/avif', bmp: 'image/bmp' };
+const mimeOf = n => MIME[(n.split('.').pop() || '').toLowerCase()] || 'image/jpeg';
+const isPageEntry = n => IMG_RE.test(n) && !n.includes('__MACOSX/') && !/(^|\/)\./.test(n);
+
+async function readZip(file) {
+  const buf = await file.arrayBuffer();
+  const dv = new DataView(buf), u8 = new Uint8Array(buf);
+  let eocd = -1;
+  for (let i = buf.byteLength - 22; i >= Math.max(0, buf.byteLength - 65557); i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('not a valid zip/cbz file');
+  const count = dv.getUint16(eocd + 10, true);
+  let p = dv.getUint32(eocd + 16, true);
+  if (count === 0xFFFF || p === 0xFFFFFFFF) throw new Error('ZIP64 archives are not supported');
+  const entries = [], dec = new TextDecoder();
+  for (let i = 0; i < count; i++) {
+    if (dv.getUint32(p, true) !== 0x02014b50) break;
+    const method = dv.getUint16(p + 10, true);
+    const csize = dv.getUint32(p + 20, true);
+    const nlen = dv.getUint16(p + 28, true), elen = dv.getUint16(p + 30, true), clen = dv.getUint16(p + 32, true);
+    const lho = dv.getUint32(p + 42, true);
+    entries.push({ name: dec.decode(u8.subarray(p + 46, p + 46 + nlen)), method, csize, lho });
+    p += 46 + nlen + elen + clen;
+  }
+  return { dv, u8, entries };
+}
+async function zipEntryBlob(z, e) {
+  const nlen = z.dv.getUint16(e.lho + 26, true), elen = z.dv.getUint16(e.lho + 28, true);
+  const start = e.lho + 30 + nlen + elen;
+  const data = z.u8.subarray(start, start + e.csize);
+  const type = mimeOf(e.name);
+  if (e.method === 0) return new Blob([data], { type });
+  if (e.method === 8) {
+    if (typeof DecompressionStream === 'undefined') throw new Error('this WebView is too old, update Android System WebView');
+    const out = await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).blob();
+    return new Blob([out], { type });
+  }
+  throw new Error('unsupported compression method');
+}
+// ZIP-END
+
+/* ---------- storage (IndexedDB) ---------- */
+let db;
+function openDB() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open('offline-manga', 1);
+    r.onupgradeneeded = () => {
+      const d = r.result;
+      d.createObjectStore('series', { keyPath: 'id' });
+      d.createObjectStore('chapters', { keyPath: 'id' }).createIndex('series', 'seriesId');
+      d.createObjectStore('pages', { keyPath: 'id' });
+    };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+const req = r => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+const st = (n, m = 'readonly') => db.transaction(n, m).objectStore(n);
+const put = (n, v) => req(st(n, 'readwrite').put(v));
+const del = (n, k) => req(st(n, 'readwrite').delete(k));
+const chaptersOf = id => req(st('chapters').index('series').getAll(id));
+
+async function makeThumb(blob) {
+  try {
+    const bmp = await createImageBitmap(blob);
+    const w = 320, h = Math.max(1, Math.round(bmp.height * w / bmp.width));
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    c.getContext('2d').drawImage(bmp, 0, 0, w, h);
+    if (bmp.close) bmp.close();
+    return await new Promise(r => c.toBlob(b => r(b || blob), 'image/jpeg', .82));
+  } catch (e) { return blob; }
+}
+
+/* ---------- sheets and navigation ---------- */
+let sheetOpen = null;
+function openSheet(el) { el.classList.remove('hidden'); sheetOpen = el; push({ v: 'sheet' }); }
+function hideSheet() { if (sheetOpen) { sheetOpen.classList.add('hidden'); sheetOpen = null; } }
+function closeSheet() {
+  if (!sheetOpen) return;
+  if (history.state && history.state.v === 'sheet') history.back(); else hideSheet();
+}
+function askConfirm(msg, okLabel) {
+  return new Promise(res => {
+    $('#cfMsg').textContent = msg; $('#cfOk').textContent = okLabel;
+    const el = $('#confirm'); el.classList.remove('hidden');
+    const done = v => { el.classList.add('hidden'); res(v); };
+    $('#cfOk').onclick = () => done(true); $('#cfNo').onclick = () => done(false);
+  });
+}
+function showView(v) {
+  $('#library').classList.toggle('hidden', v !== 'library');
+  $('#series').classList.toggle('hidden', v !== 'series');
+}
+
+/* ---------- library ---------- */
+let coverUrls = [];
+async function renderLibrary() {
+  coverUrls.forEach(u => URL.revokeObjectURL(u)); coverUrls = [];
+  const [series, chapters] = await Promise.all([req(st('series').getAll()), req(st('chapters').getAll())]);
+  const tally = new Map();
+  for (const c of chapters) {
+    const t = tally.get(c.seriesId) || { n: 0, r: 0 };
+    t.n++; if (c.read) t.r++; tally.set(c.seriesId, t);
+  }
+  const q = $('#search').value.trim().toLowerCase();
+  const list = series.filter(s => !q || s.title.toLowerCase().includes(q))
+    .sort((a, b) => (b.lastRead || 0) - (a.lastRead || 0) || (b.added - a.added));
+  const grid = $('#grid'); grid.innerHTML = '';
+  for (const s of list) {
+    const t = tally.get(s.id) || { n: 0, r: 0 };
+    const b = document.createElement('button'); b.className = 'card';
+    const url = s.cover ? URL.createObjectURL(s.cover) : '';
+    if (url) coverUrls.push(url);
+    b.innerHTML = '<img class="cover" alt="">' +
+      '<div class="t"></div><div class="bar-p"><i></i></div><div class="s"></div>';
+    if (url) b.querySelector('img').src = url;
+    b.querySelector('.t').textContent = s.title;
+    b.querySelector('i').style.width = (t.n ? Math.round(100 * t.r / t.n) : 0) + '%';
+    b.querySelector('.s').textContent = t.r + ' of ' + t.n + ' read';
+    b.onclick = () => openSeries(s.id);
+    grid.appendChild(b);
+  }
+  const none = series.length === 0;
+  $('#empty').classList.toggle('hidden', !none);
+  $('#fab').classList.toggle('hidden', none);
+  $('#search').classList.toggle('hidden', none);
+}
+
+/* ---------- series page ---------- */
+const S = { series: null, chapters: [] };
+let serCoverUrl = '';
+async function loadSeries(id) {
+  const s = await req(st('series').get(id));
+  if (!s) return false;
+  S.series = s;
+  S.chapters = (await chaptersOf(id)).sort((a, b) => nat(a.name, b.name));
+  return true;
+}
+function continueTarget() {
+  const chs = S.chapters; if (!chs.length) return null;
+  const last = chs.findIndex(c => c.id === S.series.lastChapterId);
+  if (last >= 0 && !chs[last].read) return { ch: chs[last], label: 'Continue' };
+  const nxt = chs.slice(last >= 0 ? last + 1 : 0).find(c => !c.read);
+  if (nxt) return { ch: nxt, label: last >= 0 ? 'Continue' : 'Start reading' };
+  return { ch: chs[0], label: 'Read again' };
+}
+function renderSeries() {
+  const s = S.series;
+  $('#serTitle').textContent = s.title;
+  if (serCoverUrl) URL.revokeObjectURL(serCoverUrl);
+  const img = $('#serCover');
+  if (s.cover) { serCoverUrl = URL.createObjectURL(s.cover); img.src = serCoverUrl; }
+  else { serCoverUrl = ''; img.removeAttribute('src'); }
+  const read = S.chapters.filter(c => c.read).length, n = S.chapters.length;
+  $('#serMeta').textContent = n + (n === 1 ? ' chapter, ' : ' chapters, ') + read + ' read';
+  const t = continueTarget();
+  $('#serContinue').textContent = t ? t.label : 'No chapters';
+  $('#serContinue').disabled = !t;
+  const desc = pref.get('desc', '1') === '1';
+  $('#serSort').textContent = desc ? 'Newest first' : 'Oldest first';
+  const ul = $('#chList'); ul.innerHTML = '';
+  for (const c of (desc ? [...S.chapters].reverse() : S.chapters)) {
+    const li = document.createElement('li'); li.className = 'ch' + (c.read ? ' read' : '');
+    li.innerHTML = '<button class="main"><span class="name"></span><span class="stt"></span></button><button class="tog"></button>';
+    li.querySelector('.name').textContent = c.name;
+    li.querySelector('.stt').textContent = c.read ? 'Read' : (c.lastPage > 0 ? 'Page ' + (c.lastPage + 1) + ' of ' + c.pageCount : c.pageCount + ' pages');
+    li.querySelector('.main').onclick = () => startReading(c.id);
+    const tog = li.querySelector('.tog'); tog.textContent = c.read ? 'Mark unread' : 'Mark read';
+    tog.onclick = async () => { c.read = !c.read; if (!c.read) c.lastPage = 0; await put('chapters', c); renderSeries(); };
+    ul.appendChild(li);
+  }
+}
+async function openSeries(id, pushState = true) {
+  if (!(await loadSeries(id))) { showView('library'); renderLibrary(); return; }
+  renderSeries(); showView('series'); window.scrollTo(0, 0);
+  if (pushState) push({ v: 'series', id });
+}
+async function deleteSeries(id) {
+  for (const c of await chaptersOf(id)) { await del('pages', c.id); await del('chapters', c.id); }
+  await del('series', id);
+}
+
+/* ---------- import ---------- */
+let importing = false;
+function openImport(prefill) {
+  $('#imTitle').value = prefill || ''; $('#imChap').value = ''; $('#status').textContent = '';
+  openSheet($('#importSheet'));
+}
+async function runImport(files) {
+  if (importing) return;
+  const title = $('#imTitle').value.trim(), chapField = $('#imChap').value.trim();
+  const status = t => { $('#status').textContent = t; if (!sheetOpen) toast(t); };
+  const groups = new Map(); let unsupported = 0;
+  for (const f of files) {
+    const rel = f.webkitRelativePath || '';
+    const parts = rel ? rel.split('/') : [f.name];
+    const base = parts[parts.length - 1], dirs = parts.slice(0, -1);
+    const isImg = IMG_RE.test(base), isZip = ZIP_RE.test(base);
+    if (!isImg && !isZip) { if (/\.(cbr|rar|7z|cb7)$/i.test(base)) unsupported++; continue; }
+    if (!rel && !title && isImg) { toast('Type the manga title first'); return; }
+    let chain = isZip ? [...dirs, stripExt(base)] : dirs;
+    if (!chain.length) chain = [chapField || null];
+    let series, chapter;
+    if (chain.length === 1) { series = title || chain[0]; chapter = chain[0]; }
+    else if (chain.length === 2) { series = title || chain[0]; chapter = chain[1]; }
+    else { series = chain[1]; chapter = chain.slice(2).join(' / '); }
+    if (!groups.has(series)) groups.set(series, new Map());
+    const cm = groups.get(series), key = chapter || '';
+    if (!cm.has(key)) cm.set(key, { name: chapter, zips: [], imgs: [] });
+    const g = cm.get(key);
+    if (isZip) g.zips.push(f); else g.imgs.push({ f, path: rel || f.name });
+  }
+  if (!groups.size) {
+    status(unsupported ? 'CBR and RAR files are not supported. Convert them to CBZ first.' : 'No images or .cbz files found in that selection.');
+    return;
+  }
+  importing = true;
+  document.querySelectorAll('#importSheet button').forEach(b => b.disabled = true);
+  let added = 0, dupes = 0, skipped = 0;
+  try {
+    const all = await req(st('series').getAll());
+    for (const [sname, cm] of groups) {
+      let s = all.find(x => x.title.toLowerCase() === sname.toLowerCase());
+      const existing = s ? await chaptersOf(s.id) : [];
+      const have = new Set(existing.map(c => c.name.toLowerCase()));
+      let count = existing.length, changed = false;
+      if (!s) { s = { id: uid(), title: sname, cover: null, added: Date.now(), lastRead: 0, lastChapterId: null }; all.push(s); }
+      const list = [...cm.values()].sort((a, b) => nat(a.name || '', b.name || ''));
+      for (const g of list) {
+        const name = g.name || ('Chapter ' + (count + 1));
+        if (have.has(name.toLowerCase())) { dupes++; continue; }
+        status('Importing ' + sname + ': ' + name);
+        let blobs = [];
+        try {
+          if (g.zips.length) {
+            const z = await readZip(g.zips[0]);
+            const es = z.entries.filter(e => isPageEntry(e.name)).sort((a, b) => nat(a.name, b.name));
+            for (const e of es) blobs.push(await zipEntryBlob(z, e));
+          } else {
+            g.imgs.sort((a, b) => nat(a.path, b.path));
+            blobs = g.imgs.map(x => x.f.slice(0, x.f.size, mimeOf(x.f.name)));
+          }
+        } catch (err) { console.error(err); toast('Skipped ' + name + ': ' + err.message); skipped++; continue; }
+        if (!blobs.length) { skipped++; continue; }
+        const ch = { id: uid(), seriesId: s.id, name, pageCount: blobs.length, read: false, lastPage: 0 };
+        await put('pages', { id: ch.id, blobs });
+        await put('chapters', ch);
+        have.add(name.toLowerCase()); count++; added++; changed = true;
+        if (!s.cover) s.cover = await makeThumb(blobs[0]);
+      }
+      if (changed) await put('series', s);
+    }
+  } catch (err) {
+    console.error(err); status('Import stopped: ' + err.message + '. The phone may be out of storage.');
+  }
+  importing = false;
+  document.querySelectorAll('#importSheet button').forEach(b => b.disabled = false);
+  let msg = 'Added ' + added + (added === 1 ? ' chapter' : ' chapters');
+  if (dupes) msg += ', ' + dupes + ' already in the app';
+  if (skipped) msg += ', ' + skipped + ' skipped';
+  if (unsupported) msg += ', ' + unsupported + ' CBR/RAR not supported';
+  status(msg);
+  if (!added) toast(msg);
+  if (added) {
+    toast(msg); if (sheetOpen) closeSheet();
+    if (!$('#series').classList.contains('hidden') && S.series) { await loadSeries(S.series.id); renderSeries(); }
+    await renderLibrary();
+  }
+}
+
+/* ---------- reader ---------- */
+const R = { ch: null, list: [], idx: 0, blobs: [], urls: [], page: 0, els: [], io: null, raf: 0,
+  mode: pref.get('mode', 'rtl'), fit: pref.get('fit', 'screen') };
+let saveT = null, uiT = null;
+
+const urlOf = i => R.urls[i] || (R.urls[i] = URL.createObjectURL(R.blobs[i]));
+function freeUrls() { R.urls.forEach(u => u && URL.revokeObjectURL(u)); R.urls = []; }
+const uiVisible = () => $('#reader').classList.contains('ui');
+function showUI(auto) { $('#reader').classList.add('ui'); clearTimeout(uiT); if (auto) uiT = setTimeout(hideUI, 2400); }
+function hideUI() { clearTimeout(uiT); $('#reader').classList.remove('ui'); }
+
+function saveProgress() { clearTimeout(saveT); saveT = setTimeout(flushSave, 500); }
+async function flushSave() {
+  clearTimeout(saveT); saveT = null;
+  const ch = R.ch; if (!ch || !R.blobs.length || !S.series) return;
+  ch.lastPage = R.page; if (R.page >= R.blobs.length - 1) ch.read = true;
+  S.series.lastChapterId = ch.id; S.series.lastRead = Date.now();
+  await put('chapters', ch); await put('series', S.series);
+}
+
+async function startReading(chId) {
+  const ch = S.chapters.find(c => c.id === chId); if (!ch) return;
+  R.list = S.chapters;
+  $('#reader').classList.remove('hidden'); document.body.style.overflow = 'hidden';
+  push({ v: 'reader' });
+  await loadChapter(ch, ch.read ? 0 : (ch.lastPage || 0));
+  showUI(true);
+}
+async function loadChapter(ch, start) {
+  await flushSave();
+  const rec = await req(st('pages').get(ch.id));
+  if (!rec || !rec.blobs.length) { toast('This chapter has no pages'); return; }
+  freeUrls();
+  R.ch = ch; R.idx = R.list.findIndex(c => c.id === ch.id); R.blobs = rec.blobs;
+  const n = R.blobs.length;
+  R.page = start === 'last' ? n - 1 : Math.min(Math.max(0, start | 0), n - 1);
+  $('#rTitle').textContent = S.series.title + ': ' + ch.name;
+  buildStage();
+}
+function updateCount() {
+  $('#rCount').textContent = (R.page + 1) + ' / ' + R.blobs.length;
+  $('#rSlider').value = R.page + 1;
+}
+function loadScrollImg(el) {
+  if (!el || el.firstChild) return;
+  const img = new Image(); img.alt = ''; img.decoding = 'async';
+  img.onload = () => el.classList.add('loaded');
+  img.src = urlOf(+el.dataset.i); el.appendChild(img);
+}
+function buildStage() {
+  const stage = $('#stage'), n = R.blobs.length;
+  if (R.io) { R.io.disconnect(); R.io = null; }
+  stage.innerHTML = '';
+  const sl = $('#rSlider'); sl.max = n; sl.value = R.page + 1;
+  sl.style.direction = R.mode === 'rtl' ? 'rtl' : 'ltr';
+  if (R.mode === 'scroll') {
+    stage.className = 'scroll'; R.els = [];
+    for (let i = 0; i < n; i++) {
+      const d = document.createElement('div'); d.className = 'sp'; d.dataset.i = i;
+      stage.appendChild(d); R.els.push(d);
+    }
+    const end = document.createElement('div'); end.className = 'endcap';
+    const hasNext = R.idx < R.list.length - 1;
+    end.innerHTML = '<p></p>';
+    end.firstChild.textContent = hasNext ? 'End of ' + R.ch.name : 'End of the last chapter';
+    if (hasNext) {
+      const b = document.createElement('button'); b.className = 'btn primary'; b.textContent = 'Next chapter';
+      b.onclick = () => stepChapter(1); end.appendChild(b);
+    }
+    stage.appendChild(end);
+    R.io = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) loadScrollImg(e.target); }),
+      { root: stage, rootMargin: '1800px 0px' });
+    for (let j = Math.max(0, R.page - 1); j <= Math.min(n - 1, R.page + 1); j++) loadScrollImg(R.els[j]);
+    requestAnimationFrame(() => { R.els[R.page].scrollIntoView({ block: 'start' }); R.els.forEach(el => R.io.observe(el)); });
+  } else {
+    stage.className = 'paged fit-' + R.fit;
+    const img = document.createElement('img'); img.id = 'pg'; img.alt = ''; img.draggable = false;
+    stage.appendChild(img); showPage(R.page);
+  }
+  updateCount();
+}
+function showPage(i) {
+  R.page = i;
+  $('#pg').src = urlOf(i); $('#stage').scrollTop = 0;
+  [i + 1, i - 1, i + 2].forEach(j => { if (j >= 0 && j < R.blobs.length) { new Image().src = urlOf(j); } });
+  updateCount(); saveProgress();
+}
+function onScroll() {
+  if (R.mode !== 'scroll' || R.raf) return;
+  R.raf = requestAnimationFrame(() => {
+    R.raf = 0;
+    const stage = $('#stage'), y = stage.scrollTop + stage.clientHeight * 0.35;
+    let lo = 0, hi = R.els.length - 1;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (R.els[mid].offsetTop <= y) lo = mid; else hi = mid - 1; }
+    let p = lo;
+    if (stage.scrollTop + stage.clientHeight >= stage.scrollHeight - 6) p = R.els.length - 1;
+    if (p !== R.page) { R.page = p; updateCount(); saveProgress(); }
+  });
+}
+function goNext() {
+  if (R.mode === 'scroll') { $('#stage').scrollBy({ top: innerHeight * 0.85, behavior: 'smooth' }); return; }
+  if (R.page < R.blobs.length - 1) showPage(R.page + 1); else stepChapter(1);
+}
+function goPrev() {
+  if (R.mode === 'scroll') { $('#stage').scrollBy({ top: -innerHeight * 0.85, behavior: 'smooth' }); return; }
+  if (R.page > 0) showPage(R.page - 1); else stepChapter(-1, true);
+}
+async function stepChapter(d, toLast) {
+  const t = R.list[R.idx + d];
+  if (!t) { toast(d > 0 ? 'That was the last chapter' : 'This is the first chapter'); return; }
+  if (d > 0) { R.ch.read = true; await put('chapters', R.ch); }
+  await loadChapter(t, d < 0 && toLast ? 'last' : 0);
+}
+async function teardownReader() {
+  await flushSave();
+  if (R.io) { R.io.disconnect(); R.io = null; }
+  freeUrls(); R.ch = null; R.blobs = []; R.els = [];
+  $('#stage').innerHTML = ''; hideUI();
+  $('#reader').classList.add('hidden'); document.body.style.overflow = '';
+}
+function tap(x) {
+  if (uiVisible()) { hideUI(); return; }
+  if (R.mode === 'scroll') { showUI(); return; }
+  const z = x / innerWidth;
+  if (z < 0.3) (R.mode === 'rtl' ? goNext : goPrev)();
+  else if (z > 0.7) (R.mode === 'rtl' ? goPrev : goNext)();
+  else showUI();
+}
+function syncOptions() {
+  document.querySelectorAll('#rSheet .seg').forEach(seg => {
+    seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === R[seg.dataset.key]));
+  });
+}
+
+/* ---------- wiring ---------- */
+function bind() {
+  document.querySelectorAll('[data-action="import"]').forEach(b => b.onclick = () => openImport(''));
+  $('#search').addEventListener('input', renderLibrary);
+
+  $('#importSheet').addEventListener('click', e => { if (e.target.id === 'importSheet') closeSheet(); });
+  $('#imClose').onclick = closeSheet;
+  $('#btnFolder').onclick = () => $('#inFolder').click();
+  const needTitle = input => () => {
+    if (!$('#imTitle').value.trim()) { toast('Type the manga title first'); $('#imTitle').focus(); return; }
+    $(input).click();
+  };
+  $('#btnZip').onclick = () => $('#inZip').click();
+  $('#btnImg').onclick = needTitle('#inImg');
+  const openZipDirect = () => {
+    $('#imTitle').value = ''; $('#imChap').value = ''; $('#status').textContent = '';
+    $('#inZip').click();
+  };
+  $('#fab').onclick = openZipDirect;
+  $('#btnOpenZip').onclick = openZipDirect;
+  ['#inFolder', '#inZip', '#inImg'].forEach(id => $(id).addEventListener('change', async e => {
+    const files = [...e.target.files]; e.target.value = '';
+    if (files.length) await runImport(files);
+  }));
+
+  $('#serBack').onclick = () => history.back();
+  $('#serContinue').onclick = () => { const t = continueTarget(); if (t) startReading(t.ch.id); };
+  $('#serSort').onclick = () => { pref.set('desc', pref.get('desc', '1') === '1' ? '0' : '1'); renderSeries(); };
+  $('#serAdd').onclick = () => openImport(S.series.title);
+  $('#serDel').onclick = async () => {
+    const n = S.chapters.length;
+    const ok = await askConfirm('Remove "' + S.series.title + '" and its ' + n + (n === 1 ? ' chapter' : ' chapters') +
+      ' from this app? Your original files on the phone are not touched.', 'Remove');
+    if (!ok) return;
+    await deleteSeries(S.series.id); S.series = null; S.chapters = [];
+    toast('Removed from the app');
+    if (history.state && history.state.v === 'series') history.back(); else { showView('library'); renderLibrary(); }
+  };
+
+  const stage = $('#stage'); let pd = null;
+  stage.addEventListener('scroll', onScroll, { passive: true });
+  stage.addEventListener('pointerdown', e => { if (e.isPrimary) pd = { x: e.clientX, y: e.clientY, t: Date.now() }; });
+  stage.addEventListener('pointercancel', () => { pd = null; });
+  stage.addEventListener('pointerup', e => {
+    if (!pd) return;
+    const dx = e.clientX - pd.x, dy = e.clientY - pd.y, dt = Date.now() - pd.t; pd = null;
+    if (window.visualViewport && window.visualViewport.scale > 1.05) return;
+    if (R.mode !== 'scroll' && Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      const forward = R.mode === 'rtl' ? dx > 0 : dx < 0;
+      forward ? goNext() : goPrev(); return;
+    }
+    if (Math.abs(dx) < 12 && Math.abs(dy) < 12 && dt < 600) tap(e.clientX);
+  });
+  $('#rBack').onclick = () => history.back();
+  $('#rPrev').onclick = () => stepChapter(-1);
+  $('#rNext').onclick = () => stepChapter(1);
+  $('#rOpt').onclick = () => { syncOptions(); openSheet($('#rSheet')); };
+  $('#rDone').onclick = closeSheet;
+  $('#rSheet').addEventListener('click', e => { if (e.target.id === 'rSheet') closeSheet(); });
+  document.querySelectorAll('#rSheet .seg button').forEach(b => b.onclick = () => {
+    const key = b.parentElement.dataset.key; R[key] = b.dataset.v; pref.set(key, R[key]);
+    syncOptions(); if (R.ch) buildStage();
+  });
+  $('#rSlider').addEventListener('input', e => {
+    const p = +e.target.value - 1;
+    if (R.mode === 'scroll') {
+      for (let j = Math.max(0, p - 1); j <= Math.min(R.els.length - 1, p + 1); j++) loadScrollImg(R.els[j]);
+      R.page = p; R.els[p].scrollIntoView({ block: 'start' }); updateCount(); saveProgress();
+    } else showPage(p);
+  });
+
+  addEventListener('keydown', e => {
+    if ($('#reader').classList.contains('hidden') || sheetOpen) return;
+    if (e.key === 'Escape') { history.back(); return; }
+    if (R.mode === 'scroll') return;
+    if (e.key === 'ArrowRight') (R.mode === 'rtl' ? goPrev : goNext)();
+    else if (e.key === 'ArrowLeft') (R.mode === 'rtl' ? goNext : goPrev)();
+    else if (e.key === ' ') { e.preventDefault(); goNext(); }
+  });
+
+  addEventListener('popstate', async e => {
+    if (sheetOpen) { hideSheet(); return; }
+    const s = e.state;
+    if (!$('#reader').classList.contains('hidden')) await teardownReader();
+    if (s && (s.v === 'series' || s.v === 'reader') && S.series) await openSeries(S.series.id, false);
+    else { showView('library'); await renderLibrary(); }
+  });
+}
+
+(async function init() {
+  try { db = await openDB(); }
+  catch (e) {
+    document.body.innerHTML = '<p style="padding:24px">Storage is not available in this app. Turn on DOM storage and IndexedDB in the Android WebView settings.</p>';
+    return;
+  }
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
+  try { history.replaceState(null, ''); } catch (e) {}
+  if (/; wv\)/.test(navigator.userAgent)) {
+    $('#btnFolder').classList.add('hidden');
+    $('#btnZip').classList.add('primary');
+    $('#imHint').textContent = 'Zip files: with no title, each zip becomes its own manga named after the file. Type a title to put all the zips you pick into one manga as separate chapters.';
+  }
+  bind(); await renderLibrary();
+})();
+</script>
+</body>
+</html>
