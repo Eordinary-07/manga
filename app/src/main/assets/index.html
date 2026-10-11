@@ -110,16 +110,15 @@ h1{font-family:var(--serif);font-weight:600;font-size:1.9rem;letter-spacing:-.01
 
 <main id="library">
   <header class="top">
-    <div class="toprow"><h1>My manga</h1><button class="icon" data-action="import">More ways to add</button></div>
+    <div class="toprow"><h1>My manga</h1></div>
     <input id="search" type="search" placeholder="Search your shelf" aria-label="Search your shelf">
   </header>
   <div id="grid" class="grid"></div>
   <div id="empty" class="empty hidden">
     <p class="big">Your shelf is empty</p>
-    <p>Tap Open zip, then pick the zip files of images you downloaded. Each zip becomes one manga. Everything is stored inside the app and works with no internet.</p>
+    <p>Tap Open zip, then pick a zip or cbz file of images. Each zip becomes one manga named after the file. Everything is stored inside the app and works with no internet.</p>
     <div class="row" style="justify-content:center">
       <button class="btn primary" id="btnOpenZip">Open zip</button>
-      <button class="btn" data-action="import">More ways to add</button>
     </div>
   </div>
   <button id="fab" class="btn primary fab">Open zip</button>
@@ -160,22 +159,6 @@ h1{font-family:var(--serif);font-weight:600;font-size:1.9rem;letter-spacing:-.01
   </div>
 </div>
 
-<div id="importSheet" class="scrim hidden">
-  <div class="sheet" role="dialog" aria-labelledby="imH">
-    <h3 id="imH">Add manga</h3>
-    <p class="hint" id="imHint">Zip files: with no title, each zip becomes its own manga named after the file. Type a title to put all the zips you pick into one manga as separate chapters. Folders work too if your phone allows picking them.</p>
-    <label class="field"><span>Manga title (optional for zips, needed for loose images)</span><input id="imTitle" placeholder="e.g. Vagabond" autocomplete="off"></label>
-    <label class="field"><span>Chapter name (only for loose images)</span><input id="imChap" placeholder="Chapter 1" autocomplete="off"></label>
-    <div class="stack">
-      <button class="btn primary" id="btnFolder">Choose a folder</button>
-      <button class="btn" id="btnZip">Choose .cbz or .zip chapters</button>
-      <button class="btn" id="btnImg">Choose images for one chapter</button>
-      <button class="btn" id="imClose">Close</button>
-    </div>
-    <div id="status" role="status"></div>
-  </div>
-</div>
-
 <div id="rSheet" class="scrim hidden">
   <div class="sheet" role="dialog" aria-label="Reading options">
     <h3>Reading options</h3>
@@ -200,9 +183,7 @@ h1{font-family:var(--serif);font-weight:600;font-size:1.9rem;letter-spacing:-.01
 
 <div id="toast" class="toast hidden" role="status"></div>
 
-<input type="file" id="inFolder" class="hidden" webkitdirectory multiple>
 <input type="file" id="inZip" class="hidden" multiple accept=".cbz,.zip,application/zip,application/x-zip-compressed,application/octet-stream,application/x-cbz,application/vnd.comicbook+zip">
-<input type="file" id="inImg" class="hidden" multiple accept="image/*">
 
 <script>
 'use strict';
@@ -410,24 +391,19 @@ async function deleteSeries(id) {
 
 /* ---------- import ---------- */
 let importing = false;
-function openImport(prefill) {
-  $('#imTitle').value = prefill || ''; $('#imChap').value = ''; $('#status').textContent = '';
-  openSheet($('#importSheet'));
-}
-async function runImport(files) {
+let pendingTitle = '';
+function pickZip(title) { pendingTitle = title || ''; $('#inZip').click(); }
+async function runImport(files, forcedTitle) {
   if (importing) return;
-  const title = $('#imTitle').value.trim(), chapField = $('#imChap').value.trim();
-  const status = t => { $('#status').textContent = t; if (!sheetOpen) toast(t); };
+  const title = forcedTitle || '';
+  const status = t => toast(t);
   const groups = new Map(); let unsupported = 0;
   for (const f of files) {
     const rel = f.webkitRelativePath || '';
     const parts = rel ? rel.split('/') : [f.name];
     const base = parts[parts.length - 1], dirs = parts.slice(0, -1);
-    const isImg = IMG_RE.test(base), isZip = ZIP_RE.test(base);
-    if (!isImg && !isZip) { if (/\.(cbr|rar|7z|cb7)$/i.test(base)) unsupported++; continue; }
-    if (!rel && !title && isImg) { toast('Type the manga title first'); return; }
-    let chain = isZip ? [...dirs, stripExt(base)] : dirs;
-    if (!chain.length) chain = [chapField || null];
+    if (!ZIP_RE.test(base)) { if (/\.(cbr|rar|7z|cb7)$/i.test(base)) unsupported++; continue; }
+    const chain = [...dirs, stripExt(base)];
     let series, chapter;
     if (chain.length === 1) { series = title || chain[0]; chapter = chain[0]; }
     else if (chain.length === 2) { series = title || chain[0]; chapter = chain[1]; }
@@ -436,14 +412,13 @@ async function runImport(files) {
     const cm = groups.get(series), key = chapter || '';
     if (!cm.has(key)) cm.set(key, { name: chapter, zips: [], imgs: [] });
     const g = cm.get(key);
-    if (isZip) g.zips.push(f); else g.imgs.push({ f, path: rel || f.name });
+    g.zips.push(f);
   }
   if (!groups.size) {
-    status(unsupported ? 'CBR and RAR files are not supported. Convert them to CBZ first.' : 'No images or .cbz files found in that selection.');
+    status(unsupported ? 'CBR and RAR files are not supported. Convert them to CBZ first.' : 'No .zip or .cbz files found in that selection.');
     return;
   }
   importing = true;
-  document.querySelectorAll('#importSheet button').forEach(b => b.disabled = true);
   let added = 0, dupes = 0, skipped = 0;
   try {
     const all = await req(st('series').getAll());
@@ -482,7 +457,6 @@ async function runImport(files) {
     console.error(err); status('Import stopped: ' + err.message + '. The phone may be out of storage.');
   }
   importing = false;
-  document.querySelectorAll('#importSheet button').forEach(b => b.disabled = false);
   let msg = 'Added ' + added + (added === 1 ? ' chapter' : ' chapters');
   if (dupes) msg += ', ' + dupes + ' already in the app';
   if (skipped) msg += ', ' + skipped + ' skipped';
@@ -490,7 +464,7 @@ async function runImport(files) {
   status(msg);
   if (!added) toast(msg);
   if (added) {
-    toast(msg); if (sheetOpen) closeSheet();
+    toast(msg);
     if (!$('#series').classList.contains('hidden') && S.series) { await loadSeries(S.series.id); renderSeries(); }
     await renderLibrary();
   }
@@ -632,33 +606,20 @@ function syncOptions() {
 
 /* ---------- wiring ---------- */
 function bind() {
-  document.querySelectorAll('[data-action="import"]').forEach(b => b.onclick = () => openImport(''));
   $('#search').addEventListener('input', renderLibrary);
 
-  $('#importSheet').addEventListener('click', e => { if (e.target.id === 'importSheet') closeSheet(); });
-  $('#imClose').onclick = closeSheet;
-  $('#btnFolder').onclick = () => $('#inFolder').click();
-  const needTitle = input => () => {
-    if (!$('#imTitle').value.trim()) { toast('Type the manga title first'); $('#imTitle').focus(); return; }
-    $(input).click();
-  };
-  $('#btnZip').onclick = () => $('#inZip').click();
-  $('#btnImg').onclick = needTitle('#inImg');
-  const openZipDirect = () => {
-    $('#imTitle').value = ''; $('#imChap').value = ''; $('#status').textContent = '';
-    $('#inZip').click();
-  };
-  $('#fab').onclick = openZipDirect;
-  $('#btnOpenZip').onclick = openZipDirect;
-  ['#inFolder', '#inZip', '#inImg'].forEach(id => $(id).addEventListener('change', async e => {
+  $('#fab').onclick = () => pickZip('');
+  $('#btnOpenZip').onclick = () => pickZip('');
+  $('#inZip').addEventListener('change', async e => {
     const files = [...e.target.files]; e.target.value = '';
-    if (files.length) await runImport(files);
-  }));
+    const t = pendingTitle; pendingTitle = '';
+    if (files.length) await runImport(files, t);
+  });
 
   $('#serBack').onclick = () => history.back();
   $('#serContinue').onclick = () => { const t = continueTarget(); if (t) startReading(t.ch.id); };
   $('#serSort').onclick = () => { pref.set('desc', pref.get('desc', '1') === '1' ? '0' : '1'); renderSeries(); };
-  $('#serAdd').onclick = () => openImport(S.series.title);
+  $('#serAdd').onclick = () => pickZip(S.series.title);
   $('#serDel').onclick = async () => {
     const n = S.chapters.length;
     const ok = await askConfirm('Remove "' + S.series.title + '" and its ' + n + (n === 1 ? ' chapter' : ' chapters') +
@@ -727,11 +688,6 @@ function bind() {
   }
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
   try { history.replaceState(null, ''); } catch (e) {}
-  if (/; wv\)/.test(navigator.userAgent)) {
-    $('#btnFolder').classList.add('hidden');
-    $('#btnZip').classList.add('primary');
-    $('#imHint').textContent = 'Zip files: with no title, each zip becomes its own manga named after the file. Type a title to put all the zips you pick into one manga as separate chapters.';
-  }
   bind(); await renderLibrary();
 })();
 </script>
