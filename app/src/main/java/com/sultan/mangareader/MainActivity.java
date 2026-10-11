@@ -4,9 +4,12 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.OpenableColumns;
+import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -17,6 +20,8 @@ import android.webkit.WebViewClient;
 
 import androidx.webkit.WebViewAssetLoader;
 
+import java.io.InputStream;
+
 public class MainActivity extends Activity {
     private static final int PICK_FILES = 1001;
     private static final int STORAGE_PERM = 1002;
@@ -25,12 +30,59 @@ public class MainActivity extends Activity {
     private WebView web;
     private ValueCallback<Uri[]> pending;
 
+    // A zip handed to the app from outside ("Open with" or Share).
+    private volatile Uri sharedUri;
+    private volatile String sharedName = "";
+
+    private class Bridge {
+        @JavascriptInterface
+        public String sharedName() { return sharedName; }
+
+        @JavascriptInterface
+        public void sharedDone() { sharedUri = null; sharedName = ""; }
+    }
+
+    private void takeIntent(Intent in) {
+        if (in == null) return;
+        Uri u = null;
+        if (Intent.ACTION_VIEW.equals(in.getAction())) {
+            u = in.getData();
+        } else if (Intent.ACTION_SEND.equals(in.getAction())) {
+            u = in.getParcelableExtra(Intent.EXTRA_STREAM);
+        }
+        if (u == null) return;
+        sharedUri = u;
+        sharedName = nameOf(u);
+    }
+
+    private String nameOf(Uri u) {
+        String n = null;
+        if ("content".equals(u.getScheme())) {
+            try (Cursor c = getContentResolver().query(u, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+                if (c != null && c.moveToFirst()) n = c.getString(0);
+            } catch (Exception ignored) { }
+        }
+        if (n == null || n.isEmpty()) n = u.getLastPathSegment();
+        return (n == null || n.isEmpty()) ? "manga.zip" : n;
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
         final WebViewAssetLoader loader = new WebViewAssetLoader.Builder()
                 .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(this))
+                .addPathHandler("/shared/", path -> {
+                    Uri u = sharedUri;
+                    if (u == null) return null;
+                    try {
+                        InputStream in = getContentResolver().openInputStream(u);
+                        if (in == null) return null;
+                        return new WebResourceResponse("application/octet-stream", null, in);
+                    } catch (Exception e) {
+                        return null;
+                    }
+                })
                 .build();
 
         web = new WebView(this);
@@ -96,7 +148,19 @@ public class MainActivity extends Activity {
             requestPermissions(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, STORAGE_PERM);
         }
 
+        web.addJavascriptInterface(new Bridge(), "Android");
+        takeIntent(getIntent());
         web.loadUrl("https://" + HOST + "/assets/index.html");
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        takeIntent(intent);
+        if (web != null) {
+            web.evaluateJavascript("window.openSharedZip && window.openSharedZip()", null);
+        }
     }
 
     @Override

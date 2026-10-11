@@ -93,10 +93,33 @@ h1{font-weight:600;font-size:1.35rem;letter-spacing:-.01em;margin:0 0 12px}
 .seg button.on{background:var(--accent);color:var(--accent-ink);font-weight:600}
 .toast{position:fixed;left:50%;bottom:calc(84px + var(--bot));transform:translateX(-50%);z-index:60;max-width:90%;text-align:center;
   background:var(--ink2);border-radius:8px;padding:.55rem 1rem;font-size:.9rem}
+/* selection */
+.card,.ch{user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+.card{position:relative}
+.chk{display:none;flex:none;width:22px;height:22px;border-radius:50%;border:2px solid var(--mute)}
+body.selecting .chk{display:block}
+.sel .chk{background:var(--accent);border-color:var(--accent)}
+.sel .chk::after{content:"\2713";display:block;color:var(--accent-ink);font-size:.8rem;line-height:18px;text-align:center;font-weight:700}
+.card .chk{position:absolute;top:6px;right:6px;border-color:#fff;background:rgba(0,0,0,.45)}
+.card.sel .chk{background:var(--accent);border-color:var(--accent)}
+.card.sel .cover{opacity:.5}
+.ch .chk{margin-left:16px}
+.ch.sel{background:var(--ink)}
+body.selecting .tog,body.selecting .fab{display:none}
+.selbar{position:fixed;top:0;left:0;right:0;z-index:8;display:flex;align-items:center;gap:4px;padding:calc(var(--top) + 6px) 8px 6px;background:var(--ink)}
+#selCount{flex:1;padding-left:4px}
+.icon.danger{color:var(--red)}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
 <body>
+
+<div id="selbar" class="selbar hidden">
+  <button class="icon" id="selCancel" aria-label="Cancel">&#10005;</button>
+  <span id="selCount">0 selected</span>
+  <button class="icon" id="selAll">All</button>
+  <button class="icon danger" id="selDel">Delete</button>
+</div>
 
 <main id="library">
   <header class="top">
@@ -428,16 +451,17 @@ async function renderLibrary() {
   const grid = $('#grid'); grid.innerHTML = '';
   for (const s of list) {
     const t = tally.get(s.id) || { n: 0, r: 0 };
-    const b = document.createElement('button'); b.className = 'card';
+    const b = document.createElement('button'); b.className = 'card' + (SEL.on && SEL.ids.has(s.id) ? ' sel' : '');
+    b.dataset.sid = s.id;
     const url = s.cover ? URL.createObjectURL(s.cover) : '';
     if (url) coverUrls.push(url);
-    b.innerHTML = '<img class="cover" alt="">' +
+    b.innerHTML = '<img class="cover" alt=""><span class="chk"></span>' +
       '<div class="t"></div><div class="bar-p"><i></i></div><div class="s"></div>';
     if (url) b.querySelector('img').src = url;
     b.querySelector('.t').textContent = s.title;
     b.querySelector('i').style.width = (t.n ? Math.round(100 * t.r / t.n) : 0) + '%';
     b.querySelector('.s').textContent = t.r + ' of ' + t.n + ' read';
-    b.onclick = () => openSeries(s.id);
+    b.onclick = () => { if (SEL.on && SEL.scope === 'lib') selToggle(s.id); else openSeries(s.id); };
     grid.appendChild(b);
   }
   const none = series.length === 0;
@@ -480,11 +504,12 @@ function renderSeries() {
   $('#serSort').textContent = desc ? 'Newest first' : 'Oldest first';
   const ul = $('#chList'); ul.innerHTML = '';
   for (const c of (desc ? [...S.chapters].reverse() : S.chapters)) {
-    const li = document.createElement('li'); li.className = 'ch' + (c.read ? ' read' : '');
-    li.innerHTML = '<button class="main"><span class="name"></span><span class="stt"></span></button><button class="tog"></button>';
+    const li = document.createElement('li'); li.className = 'ch' + (c.read ? ' read' : '') + (SEL.on && SEL.ids.has(c.id) ? ' sel' : '');
+    li.dataset.sid = c.id;
+    li.innerHTML = '<span class="chk"></span><button class="main"><span class="name"></span><span class="stt"></span></button><button class="tog"></button>';
     li.querySelector('.name').textContent = c.name;
     li.querySelector('.stt').textContent = c.read ? 'Read' : (c.lastPage > 0 ? 'Page ' + (c.lastPage + 1) + ' of ' + c.pageCount : c.pageCount + ' pages');
-    li.querySelector('.main').onclick = () => startReading(c.id);
+    li.querySelector('.main').onclick = () => { if (SEL.on && SEL.scope === 'ser') selToggle(c.id); else startReading(c.id); };
     const tog = li.querySelector('.tog'); tog.textContent = c.read ? 'Mark unread' : 'Mark read';
     tog.onclick = async () => { c.read = !c.read; if (!c.read) c.lastPage = 0; await put('chapters', c); renderSeries(); };
     ul.appendChild(li);
@@ -518,7 +543,7 @@ async function unlockZip(z, entry, name, state) {
   let wrong = false;
   for (;;) {
     const pw = await askPassword(name, wrong);
-    if (pw === null) throw new Error('password not entered');
+    if (pw === null) throw Object.assign(new Error('password not entered'), { cancelled: true });
     if (pw && await works(pw)) { state.pw = pw; return pw; }
     wrong = true;
   }
@@ -550,11 +575,11 @@ async function runImport(files, forcedTitle) {
     g.zips.push(f);
   }
   if (!groups.size) {
-    status(unsupported ? 'CBR and RAR files are not supported. Convert them to CBZ first.' : 'No .zip or .cbz files found in that selection.');
+    status(unsupported ? 'CBR and RAR files are not supported. Convert them to CBZ first.' : 'This file is not supported.');
     return;
   }
   importing = true;
-  let added = 0, dupes = 0, skipped = 0;
+  let added = 0, skipped = 0, openTarget = null;
   const unlock = { pw: null };
   try {
     const all = await req(st('series').getAll());
@@ -567,8 +592,12 @@ async function runImport(files, forcedTitle) {
       const list = [...cm.values()].sort((a, b) => nat(a.name || '', b.name || ''));
       for (const g of list) {
         const name = g.name || ('Chapter ' + (count + 1));
-        if (have.has(name.toLowerCase())) { dupes++; continue; }
-        status('Importing ' + sname + ': ' + name);
+        if (have.has(name.toLowerCase())) {
+          const ex = existing.find(c => c.name.toLowerCase() === name.toLowerCase());
+          if (ex && !openTarget) openTarget = { sid: s.id, cid: ex.id };
+          continue;
+        }
+        status('Unpacking ' + name);
         let blobs = [];
         try {
           if (g.zips.length) {
@@ -582,31 +611,118 @@ async function runImport(files, forcedTitle) {
             g.imgs.sort((a, b) => nat(a.path, b.path));
             blobs = g.imgs.map(x => x.f.slice(0, x.f.size, mimeOf(x.f.name)));
           }
-        } catch (err) { console.error(err); toast('Skipped ' + name + ': ' + err.message); skipped++; continue; }
-        if (!blobs.length) { skipped++; continue; }
+        } catch (err) {
+          console.error(err);
+          toast(err.cancelled ? 'Password not entered' : 'This zip file is not supported');
+          skipped++; continue;
+        }
+        if (!blobs.length) { toast('This zip file is not supported'); skipped++; continue; }
         const ch = { id: uid(), seriesId: s.id, name, pageCount: blobs.length, read: false, lastPage: 0 };
         await put('pages', { id: ch.id, blobs });
         await put('chapters', ch);
         have.add(name.toLowerCase()); count++; added++; changed = true;
+        if (!openTarget) openTarget = { sid: s.id, cid: ch.id };
         if (!s.cover) s.cover = await makeThumb(blobs[0]);
       }
       if (changed) await put('series', s);
     }
   } catch (err) {
-    console.error(err); status('Import stopped: ' + err.message + '. The phone may be out of storage.');
+    console.error(err); status('Import stopped. The phone may be out of storage.');
   }
   importing = false;
-  let msg = 'Added ' + added + (added === 1 ? ' chapter' : ' chapters');
-  if (dupes) msg += ', ' + dupes + ' already in the app';
-  if (skipped) msg += ', ' + skipped + ' skipped';
-  if (unsupported) msg += ', ' + unsupported + ' CBR/RAR not supported';
-  status(msg);
-  if (!added) toast(msg);
-  if (added) {
-    toast(msg);
-    if (!$('#series').classList.contains('hidden') && S.series) { await loadSeries(S.series.id); renderSeries(); }
-    await renderLibrary();
+  await renderLibrary();
+  if (openTarget) await openChapter(openTarget.sid, openTarget.cid);
+}
+
+// Open a chapter straight in the reader, with no extra screens in between.
+async function openChapter(sid, cid) {
+  if (SEL.on) { SEL.on = false; SEL.ids.clear(); selUpdate(); }
+  if (!$('#reader').classList.contains('hidden')) await teardownReader();
+  const inSeries = !$('#series').classList.contains('hidden') && S.series && S.series.id === sid;
+  if (inSeries) { await loadSeries(sid); renderSeries(); } else await openSeries(sid);
+  await startReading(cid);
+}
+
+// A zip handed to the app by Android ("Open with" or Share).
+async function openSharedZip() {
+  let name = '';
+  try { name = window.Android ? Android.sharedName() : ''; } catch (e) {}
+  if (!name) return;
+  try {
+    toast('Opening ' + name);
+    const r = await fetch('/shared/file');
+    if (!r.ok) throw new Error('read failed');
+    const blob = await r.blob();
+    try { Android.sharedDone(); } catch (e) {}
+    await runImport([new File([blob], ZIP_RE.test(name) ? name : name + '.zip', { type: 'application/zip' })], '');
+  } catch (e) {
+    console.error(e);
+    try { Android.sharedDone(); } catch (x) {}
+    toast('This zip file is not supported');
   }
+}
+window.openSharedZip = openSharedZip;
+
+/* ---------- selection and deletion ---------- */
+const SEL = { on: false, scope: '', ids: new Set(), popping: false };
+function selUpdate() {
+  document.body.classList.toggle('selecting', SEL.on);
+  $('#selbar').classList.toggle('hidden', !SEL.on);
+  $('#selCount').textContent = SEL.ids.size + ' selected';
+  document.querySelectorAll('[data-sid]').forEach(el => el.classList.toggle('sel', SEL.ids.has(el.dataset.sid)));
+}
+function selStart(scope, id) {
+  SEL.on = true; SEL.scope = scope; SEL.ids = new Set([id]);
+  push({ v: 'sel' }); selUpdate();
+}
+// Leave selection mode; steps = how many history entries to step back (1 = just the selection one).
+function leaveSel(steps) {
+  SEL.on = false; SEL.ids.clear(); selUpdate();
+  if (history.state && history.state.v === 'sel') { SEL.popping = true; history.go(-steps); return true; }
+  return false;
+}
+function selToggle(id) {
+  if (SEL.ids.has(id)) SEL.ids.delete(id); else SEL.ids.add(id);
+  if (!SEL.ids.size) { leaveSel(1); return; }
+  selUpdate();
+}
+function addLongPress(container, selector, scope) {
+  let timer = 0, sx = 0, sy = 0, fired = false;
+  const cancel = () => clearTimeout(timer);
+  container.addEventListener('pointerdown', e => {
+    const el = e.target.closest(selector); if (!el || SEL.on) return;
+    fired = false; sx = e.clientX; sy = e.clientY;
+    timer = setTimeout(() => { fired = true; selStart(scope, el.dataset.sid); if (navigator.vibrate) navigator.vibrate(15); }, 450);
+  });
+  container.addEventListener('pointermove', e => { if (Math.hypot(e.clientX - sx, e.clientY - sy) > 10) cancel(); });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(t => container.addEventListener(t, cancel));
+  container.addEventListener('click', e => { if (fired) { e.stopPropagation(); e.preventDefault(); fired = false; } }, true);
+  container.addEventListener('contextmenu', e => { if (e.target.closest(selector)) e.preventDefault(); });
+}
+async function deleteSelected() {
+  const ids = [...SEL.ids], n = ids.length, lib = SEL.scope === 'lib';
+  if (!n) return;
+  const msg = lib
+    ? 'Delete ' + n + ' manga and all their chapters from this app? Your original files are not touched.'
+    : 'Delete ' + n + (n === 1 ? ' chapter' : ' chapters') + ' from this app? Your original files are not touched.';
+  if (!(await askConfirm(msg, 'Delete'))) return;
+  if (lib) {
+    for (const id of ids) await deleteSeries(id);
+    leaveSel(1); await renderLibrary();
+  } else {
+    for (const id of ids) { await del('pages', id); await del('chapters', id); }
+    const sid = S.series && S.series.id;
+    const left = sid ? await chaptersOf(sid) : [];
+    if (sid && !left.length) {
+      await del('series', sid); S.series = null; S.chapters = [];
+      if (!leaveSel(2)) { SEL.popping = true; history.back(); }
+      showView('library'); await renderLibrary();
+    } else {
+      leaveSel(1);
+      if (sid) { await loadSeries(sid); renderSeries(); }
+    }
+  }
+  toast('Deleted');
 }
 
 /* ---------- reader ---------- */
@@ -645,7 +761,7 @@ async function loadChapter(ch, start) {
   R.ch = ch; R.idx = R.list.findIndex(c => c.id === ch.id); R.blobs = rec.blobs;
   const n = R.blobs.length;
   R.page = start === 'last' ? n - 1 : Math.min(Math.max(0, start | 0), n - 1);
-  $('#rTitle').textContent = S.series.title + ': ' + ch.name;
+  $('#rTitle').textContent = S.series.title + (ch.name === S.series.title ? '' : ': ' + ch.name);
   buildStage();
 }
 function updateCount() {
@@ -747,6 +863,14 @@ function syncOptions() {
 function bind() {
   $('#search').addEventListener('input', renderLibrary);
 
+  addLongPress($('#grid'), '.card', 'lib');
+  addLongPress($('#chList'), '.ch', 'ser');
+  $('#selCancel').onclick = () => leaveSel(1);
+  $('#selAll').onclick = () => {
+    const sel = SEL.scope === 'lib' ? '#grid [data-sid]' : '#chList [data-sid]';
+    document.querySelectorAll(sel).forEach(el => SEL.ids.add(el.dataset.sid)); selUpdate();
+  };
+  $('#selDel').onclick = deleteSelected;
   $('#fab').onclick = () => pickZip('');
   $('#btnOpenZip').onclick = () => pickZip('');
   $('#inZip').addEventListener('change', async e => {
@@ -811,6 +935,8 @@ function bind() {
   });
 
   addEventListener('popstate', async e => {
+    if (SEL.popping) { SEL.popping = false; return; }
+    if (SEL.on) { SEL.on = false; SEL.ids.clear(); selUpdate(); return; }
     if (sheetOpen) { hideSheet(); return; }
     const s = e.state;
     if (!$('#reader').classList.contains('hidden')) await teardownReader();
@@ -828,6 +954,7 @@ function bind() {
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
   try { history.replaceState(null, ''); } catch (e) {}
   bind(); await renderLibrary();
+  openSharedZip();
 })();
 </script>
 </body>
