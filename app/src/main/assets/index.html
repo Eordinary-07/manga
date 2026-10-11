@@ -727,7 +727,7 @@ async function deleteSelected() {
 
 /* ---------- reader ---------- */
 const R = { ch: null, list: [], idx: 0, blobs: [], urls: [], page: 0, els: [], io: null, raf: 0,
-  mode: pref.get('mode', 'rtl'), fit: pref.get('fit', 'screen') };
+  mode: pref.get('mode', 'ltr'), fit: pref.get('fit', 'screen') };
 let saveT = null, uiT = null;
 
 const urlOf = i => R.urls[i] || (R.urls[i] = URL.createObjectURL(R.blobs[i]));
