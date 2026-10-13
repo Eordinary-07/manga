@@ -86,7 +86,7 @@ h1{font-weight:600;font-size:1.35rem;letter-spacing:-.01em;margin:0 0 12px}
 .sheet h3{font-size:1.1rem;font-weight:600;margin:0 0 12px}
 .hint{color:var(--mute);margin:0 0 12px;font-size:.88rem;overflow-wrap:anywhere}
 .hint.err{color:var(--red)}
-#pwdIn{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:.6rem .8rem;margin-bottom:12px}
+#pwdIn,#mName{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:.6rem .8rem;margin-bottom:12px}
 .lbl{display:block;font-size:.8rem;color:var(--mute);margin-bottom:6px}
 .seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-bottom:16px}
 .seg button{flex:1;background:none;border:0;padding:.5rem .3rem;cursor:pointer;font-size:.85rem}
@@ -103,6 +103,12 @@ body.selecting .chk{display:block}
 .card .chk{position:absolute;top:6px;right:6px;border-color:#fff;background:rgba(0,0,0,.45)}
 .card.sel .chk{background:var(--accent);border-color:var(--accent)}
 .card.sel .cover{opacity:.5}
+.card.sel .chk::after{content:attr(data-n)}
+.mlist{list-style:none;margin:0 0 12px;padding:0}
+.mlist li{display:flex;align-items:center;gap:2px;border-top:1px solid var(--line)}
+.mlist li:first-child{border-top:0}
+.mlist .n{color:var(--mute);min-width:1.8em;font-variant-numeric:tabular-nums}
+.mlist .mt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ch .chk{margin-left:16px}
 .ch.sel{background:var(--ink)}
 body.selecting .tog,body.selecting .fab{display:none}
@@ -117,6 +123,7 @@ body.selecting .tog,body.selecting .fab{display:none}
 <div id="selbar" class="selbar hidden">
   <button class="icon" id="selCancel" aria-label="Cancel">&#10005;</button>
   <span id="selCount">0 selected</span>
+  <button class="icon hidden" id="selMerge">Merge</button>
   <button class="icon" id="selAll">All</button>
   <button class="icon danger" id="selDel">Delete</button>
 </div>
@@ -194,6 +201,18 @@ body.selecting .tog,body.selecting .fab{display:none}
   </div>
 </div>
 
+<div id="mergeSheet" class="scrim hidden" style="z-index:50">
+  <div class="sheet" role="dialog" aria-labelledby="mTitle">
+    <h3 id="mTitle">Merge into one manga</h3>
+    <input id="mName" type="text" placeholder="Name for the combined manga" autocomplete="off" style="margin-bottom:12px">
+    <div class="lbl">Chapter order (each selected manga becomes the next chapter)</div>
+    <ol id="mList" class="mlist"></ol>
+    <label class="hint" style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="mKeep"> Keep original chapter names</label>
+    <p id="mHint" class="hint err"></p>
+    <div class="row"><button class="btn primary" id="mOk">Merge</button><button class="btn" id="mNo">Cancel</button></div>
+  </div>
+</div>
+
 <div id="pwdSheet" class="scrim hidden" style="z-index:55">
   <div class="sheet" role="dialog" aria-labelledby="pwdMsg">
     <h3>Password needed</h3>
@@ -210,6 +229,7 @@ body.selecting .tog,body.selecting .fab{display:none}
 <script>
 'use strict';
 const $ = s => document.querySelector(s);
+const chSort = (a, b) => (a.order != null && b.order != null) ? a.order - b.order : nat(a.name, b.name);
 const nat = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
 const stripExt = n => n.replace(/\.[^.]+$/, '');
@@ -468,6 +488,7 @@ async function renderLibrary() {
   $('#empty').classList.toggle('hidden', !none);
   $('#fab').classList.toggle('hidden', none);
   $('#search').classList.toggle('hidden', none);
+  if (SEL.on) selUpdate();
 }
 
 /* ---------- series page ---------- */
@@ -477,7 +498,7 @@ async function loadSeries(id) {
   const s = await req(st('series').get(id));
   if (!s) return false;
   S.series = s;
-  S.chapters = (await chaptersOf(id)).sort((a, b) => nat(a.name, b.name));
+  S.chapters = (await chaptersOf(id)).sort(chSort);
   return true;
 }
 function continueTarget() {
@@ -588,6 +609,8 @@ async function runImport(files, forcedTitle) {
       const existing = s ? await chaptersOf(s.id) : [];
       const have = new Set(existing.map(c => c.name.toLowerCase()));
       let count = existing.length, changed = false;
+      const ordered = existing.some(c => c.order != null);
+      let nextOrder = existing.reduce((m, c) => Math.max(m, c.order || 0), 0);
       if (!s) { s = { id: uid(), title: sname, cover: null, added: Date.now(), lastRead: 0, lastChapterId: null }; all.push(s); }
       const list = [...cm.values()].sort((a, b) => nat(a.name || '', b.name || ''));
       for (const g of list) {
@@ -618,6 +641,7 @@ async function runImport(files, forcedTitle) {
         }
         if (!blobs.length) { toast('This zip file is not supported'); skipped++; continue; }
         const ch = { id: uid(), seriesId: s.id, name, pageCount: blobs.length, read: false, lastPage: 0 };
+        if (ordered) ch.order = ++nextOrder;
         await put('pages', { id: ch.id, blobs });
         await put('chapters', ch);
         have.add(name.toLowerCase()); count++; added++; changed = true;
@@ -670,6 +694,11 @@ function selUpdate() {
   $('#selbar').classList.toggle('hidden', !SEL.on);
   $('#selCount').textContent = SEL.ids.size + ' selected';
   document.querySelectorAll('[data-sid]').forEach(el => el.classList.toggle('sel', SEL.ids.has(el.dataset.sid)));
+  $('#selMerge').classList.toggle('hidden', !(SEL.on && SEL.scope === 'lib' && SEL.ids.size > 1));
+  if (SEL.on && SEL.scope === 'lib') {
+    let i = 0;
+    for (const id of SEL.ids) { i++; const el = document.querySelector('#grid [data-sid="' + id + '"] .chk'); if (el) el.dataset.n = i; }
+  }
 }
 function selStart(scope, id) {
   SEL.on = true; SEL.scope = scope; SEL.ids = new Set([id]);
@@ -724,6 +753,58 @@ async function deleteSelected() {
   }
   toast('Deleted');
 }
+
+/* ---------- merge several manga into one, in the order selected ---------- */
+const MG = { order: [], titles: new Map() };
+async function mergeSeries(ids, title, keepNames) {
+  const all = await req(st('series').getAll());
+  const srcs = ids.map(id => all.find(s => s.id === id)).filter(Boolean);
+  if (srcs.length < 2) return 'Select at least two manga';
+  const clash = all.find(s => !ids.includes(s.id) && s.title.toLowerCase() === title.toLowerCase());
+  if (clash) return 'A manga named \u201c' + clash.title + '\u201d already exists';
+  const m = { id: uid(), title, cover: null, added: Date.now(), lastRead: 0, lastChapterId: null };
+  for (const s of srcs) {
+    if (!m.cover && s.cover) m.cover = s.cover;
+    if ((s.lastRead || 0) > m.lastRead) { m.lastRead = s.lastRead; m.lastChapterId = s.lastChapterId; }
+  }
+  await put('series', m);
+  let n = 0;
+  for (const s of srcs) {
+    for (const c of (await chaptersOf(s.id)).sort(chSort)) {
+      n++; c.seriesId = m.id; c.order = n;
+      if (!keepNames) c.name = 'Chapter ' + n;
+      await put('chapters', c);
+    }
+  }
+  for (const s of srcs) await del('series', s.id);
+  return null;
+}
+function renderMerge() {
+  const ul = $('#mList'); ul.innerHTML = '';
+  const last = MG.order.length - 1;
+  MG.order.forEach((id, i) => {
+    const li = document.createElement('li');
+    li.innerHTML = '<span class="n"></span><span class="mt"></span>' +
+      '<button class="icon up" aria-label="Move up">\u2191</button><button class="icon dn" aria-label="Move down">\u2193</button>';
+    li.querySelector('.n').textContent = (i + 1) + '.';
+    li.querySelector('.mt').textContent = MG.titles.get(id) || '';
+    const up = li.querySelector('.up'), dn = li.querySelector('.dn');
+    up.disabled = i === 0; dn.disabled = i === last;
+    const swap = j => { [MG.order[i], MG.order[j]] = [MG.order[j], MG.order[i]]; renderMerge(); };
+    up.onclick = () => swap(i - 1); dn.onclick = () => swap(i + 1);
+    ul.appendChild(li);
+  });
+}
+async function openMerge() {
+  if (SEL.scope !== 'lib' || SEL.ids.size < 2) return;
+  const all = await req(st('series').getAll());
+  MG.titles = new Map(all.map(s => [s.id, s.title]));
+  MG.order = [...SEL.ids];
+  $('#mName').value = ''; $('#mKeep').checked = false; $('#mHint').textContent = '';
+  renderMerge(); $('#mergeSheet').classList.remove('hidden');
+  setTimeout(() => $('#mName').focus(), 60);
+}
+const hideMerge = () => $('#mergeSheet').classList.add('hidden');
 
 /* ---------- reader ---------- */
 const R = { ch: null, list: [], idx: 0, blobs: [], urls: [], page: 0, els: [], io: null, raf: 0,
@@ -871,6 +952,21 @@ function bind() {
     document.querySelectorAll(sel).forEach(el => SEL.ids.add(el.dataset.sid)); selUpdate();
   };
   $('#selDel').onclick = deleteSelected;
+  $('#selMerge').onclick = openMerge;
+  $('#mNo').onclick = hideMerge;
+  $('#mOk').onclick = async () => {
+    const title = $('#mName').value.trim(), hint = $('#mHint');
+    if (!title) { hint.textContent = 'Enter a name first.'; return; }
+    $('#mOk').disabled = true;
+    try {
+      const err = await mergeSeries(MG.order, title, $('#mKeep').checked);
+      if (err) { hint.textContent = err; return; }
+    } catch (e) {
+      console.error(e); hint.textContent = 'Merge failed. The phone may be out of storage.'; return;
+    } finally { $('#mOk').disabled = false; }
+    const n = MG.order.length;
+    hideMerge(); leaveSel(1); await renderLibrary(); toast('Merged ' + n + ' manga');
+  };
   $('#fab').onclick = () => pickZip('');
   $('#btnOpenZip').onclick = () => pickZip('');
   $('#inZip').addEventListener('change', async e => {
@@ -936,6 +1032,7 @@ function bind() {
 
   addEventListener('popstate', async e => {
     if (SEL.popping) { SEL.popping = false; return; }
+    if (!$('#mergeSheet').classList.contains('hidden')) { hideMerge(); push({ v: 'sel' }); return; }
     if (SEL.on) { SEL.on = false; SEL.ids.clear(); selUpdate(); return; }
     if (sheetOpen) { hideSheet(); return; }
     const s = e.state;
